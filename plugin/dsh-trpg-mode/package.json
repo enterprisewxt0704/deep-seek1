@@ -1,0 +1,37 @@
+{
+  "name": "@local/dsh-trpg-mode",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "跑团模式（TRPG）：角色卡与历史骰点面板、骰子概率自定义、世界观生成、团史摘要、存档读档、跑团专用上下文压缩。",
+  "exports": {
+    ".": "./index.js",
+    "./session": "./session.js",
+    "./compaction": "./compaction.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "session.js",
+    "compaction.js",
+    "client.js",
+    "lib/",
+    "locale/",
+    "icon.svg",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    }
+  }
+}

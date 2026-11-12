@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "TRPG Mode",
+    "description": "A tabletop role-playing game master mode: character sheet and roll history panel, custom dice weights, world building, campaign digest, save/load, and a TRPG-specific compaction backend."
+  }
+}

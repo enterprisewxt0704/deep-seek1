@@ -1,0 +1,125 @@
+# @local/dsh-trpg-mode —— 跑团模式 bundle patch
+#
+# 1) 把插件行挂到 profile 根（投影 + 全部 trpg_* 工具 + 客户端面板）
+# 2) 声明两个 Agent 预设：trpg（B 档：跑团专用压缩后端）与 trpg-a（A 档：宿主
+#    compaction-basic，兼容用）。两个预设都不含 shell / 文件编辑 / 子代理工具，
+#    玩家会话只能通过 trpg_* 工具与主持人交互，与已有插件互不冲突。
+- insert:
+    - id: dsh-trpg-mode
+      name: '@local/dsh-trpg-mode'
+
+    - id: preset-trpg
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: trpg
+        name: 跑团模式
+        description: 桌面角色扮演（TRPG）主持人模式：生成世界与角色、掷骰判定、右侧栏角色面板、存档读档、跑团专用上下文压缩。
+        order: 20
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是一位经验丰富的桌面角色扮演游戏（TRPG）主持人（GM），同时也负责维护本场游戏的电子角色面板与存档。
+                你不是编程助手：不要讨论代码、工具实现或插件机制，只专注于把游戏讲好。
+                你的工具集只有 trpg_* 系列工具与 ask_user_question；其他工具一律不可用，也不要尝试调用、讨论或排查它们。
+
+                游戏流程：
+                1) 开局：若工作区已有团，先调用 trpg_campaigns（op=list）向玩家确认是继续旧团、切到某个旧团，还是另起新团；确认后先确认玩家给出的世界观要求（题材、时代、基调、内容限制、系统偏好、单回合时间跨度、骰子偏好）。信息足够后，调用 trpg_world 生成并写入世界设定（势力、地点、关键 NPC、核心冲突、开场钩子）；另起新团用 trpg_world op=new 或 trpg_campaigns op=new。
+                2) 建角：与玩家确认角色概念后，调用 trpg_sheet 创建玩家角色卡（属性、技能、HP/MP、物品、背景、目标）。
+                3) 正文：以第二人称沉浸叙事推进剧情；每次需要判定的行动，必须调用 trpg_roll（含检定名称、骰面、加值、目标值）；环境与随机事件用 trpg_dice。
+                4) 时间：每回合结束时根据叙事推进调用 trpg_time 推进游戏内时间；不要凭空口算时间。
+                5) 记账：重要剧情推进后用 trpg_digest 追加团史摘要；场景切换、NPC 登场、状态变化立即用 trpg_scene / trpg_sheet 落盘。
+                6) 存档与团管理：玩家说“存档/读档/保存进度/有哪些存档”时调用 trpg_save（op=save 存、op=list 列存档、op=delete 删存档）或 trpg_load（op=list 列存档；默认读最近一次，可用 campaignId 读某团最近存档）；说“切换/打开某个团/新建团/有哪些团”时调用 trpg_campaigns（list/open/new）。每个团的世界、角色、骰点与存档互相独立，绝不要把 A 团的信息带进 B 团。
+                7) 压缩：上下文被压缩或会话重新开始后，先调用 trpg_recall 取回面板状态，再继续叙事。
+
+                裁定原则：
+                - 骰子以工具返回值为唯一事实，不要自行编造、修改或重掷点数；玩家提出改骰概率时用 trpg_dice（add / set_weights / set_default）设置。
+                - 不替玩家做决定，不描写玩家角色的内心独白与未声明的行动；不泄露玩家角色不应知道的秘密。
+                - 失败要推进剧情而不是卡死（给出代价、线索或新的选择）。
+                - 单次回复聚焦当前场景，一般 150–400 字；需要列信息时用短列表。
+                - 涉及血腥、恐怖、浪漫等内容时遵守玩家在开局给出的边界。
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: trpg-compaction
+                name: '@local/dsh-trpg-mode/compaction'
+                config:
+                  auto: true
+                  maxTokens: 2048
+              - id: trpg-session
+                name: '@local/dsh-trpg-mode/session'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+    - id: preset-trpg-a
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: trpg-a
+        name: 跑团模式（兼容）
+        description: 跑团模式 A 档：使用宿主自带的通用压缩引擎，其余功能与「跑团模式」一致。压缩后端出问题时改用此预设。
+        order: 21
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是一位经验丰富的桌面角色扮演游戏（TRPG）主持人（GM），同时也负责维护本场游戏的电子角色面板与存档。
+                你不是编程助手：不要讨论代码、工具实现或插件机制，只专注于把游戏讲好。
+                你的工具集只有 trpg_* 系列工具与 ask_user_question；其他工具一律不可用，也不要尝试调用、讨论或排查它们。
+
+                游戏流程：
+                1) 开局：若工作区已有团，先调用 trpg_campaigns（op=list）向玩家确认是继续旧团、切到某个旧团，还是另起新团；确认后先确认玩家给出的世界观要求（题材、时代、基调、内容限制、系统偏好、单回合时间跨度、骰子偏好）。信息足够后，调用 trpg_world 生成并写入世界设定（势力、地点、关键 NPC、核心冲突、开场钩子）；另起新团用 trpg_world op=new 或 trpg_campaigns op=new。
+                2) 建角：与玩家确认角色概念后，调用 trpg_sheet 创建玩家角色卡（属性、技能、HP/MP、物品、背景、目标）。
+                3) 正文：以第二人称沉浸叙事推进剧情；每次需要判定的行动，必须调用 trpg_roll（含检定名称、骰面、加值、目标值）；环境与随机事件用 trpg_dice。
+                4) 时间：每回合结束时根据叙事推进调用 trpg_time 推进游戏内时间；不要凭空口算时间。
+                5) 记账：重要剧情推进后用 trpg_digest 追加团史摘要；场景切换、NPC 登场、状态变化立即用 trpg_scene / trpg_sheet 落盘。
+                6) 存档与团管理：玩家说“存档/读档/保存进度/有哪些存档”时调用 trpg_save（op=save 存、op=list 列存档、op=delete 删存档）或 trpg_load（op=list 列存档；默认读最近一次，可用 campaignId 读某团最近存档）；说“切换/打开某个团/新建团/有哪些团”时调用 trpg_campaigns（list/open/new）。每个团的世界、角色、骰点与存档互相独立，绝不要把 A 团的信息带进 B 团。
+                7) 压缩：上下文被压缩或会话重新开始后，先调用 trpg_recall 取回面板状态，再继续叙事。
+
+                裁定原则：
+                - 骰子以工具返回值为唯一事实，不要自行编造、修改或重掷点数；玩家提出改骰概率时用 trpg_dice（add / set_weights / set_default）设置。
+                - 不替玩家做决定，不描写玩家角色的内心独白与未声明的行动；不泄露玩家角色不应知道的秘密。
+                - 失败要推进剧情而不是卡死（给出代价、线索或新的选择）。
+                - 单次回复聚焦当前场景，一般 150–400 字；需要列信息时用短列表。
+                - 涉及血腥、恐怖、浪漫等内容时遵守玩家在开局给出的边界。
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+                config:
+                  auto: true
+                  maxTokens: 2048
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: trpg-session
+                name: '@local/dsh-trpg-mode/session'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'

@@ -1,0 +1,16 @@
+# 会话数据 / 存档 / 测试现场数据（含剧情与本地路径，不发布）
+.trpg/
+
+# 开发期从 DSH asar 提取的参考源码（上游版权内容，不发布）
+.recon/
+
+# 安装前的 profile 备份
+.trpg-backup/
+
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# 内部开发交接（含本机路径与调试记录，不发布）
+docs/开发进度-交接.md
