@@ -48,8 +48,8 @@ await fs.writeFile(
   'utf8',
 );
 
-const { buildLibrarySync, migrateLegacyStateSync } = await import('../plugin/dsh-trpg-mode/lib/saves.js');
-const { createToolDefinitions } = await import('../plugin/dsh-trpg-mode/lib/tools.js');
+const { buildLibrarySync, migrateLegacyStateSync } = await import('../../plugin/dsh-trpg-mode/lib/saves.js');
+const { createToolDefinitions } = await import('../../plugin/dsh-trpg-mode/lib/tools.js');
 
 // 1) 同步迁移 + 投影播种：第一次打开面板就应该看到旧团
 migrateLegacyStateSync(cwd);

@@ -3,8 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const state = await import('../plugin/dsh-trpg-mode/lib/state.js');
-const saves = await import('../plugin/dsh-trpg-mode/lib/saves.js');
+const state = await import('../../plugin/dsh-trpg-mode/lib/state.js');
+const saves = await import('../../plugin/dsh-trpg-mode/lib/saves.js');
 
 const s = state.defaultState();
 assert.ok(s.campaign && s.world && s.pc && s.scene && Array.isArray(s.rolls));

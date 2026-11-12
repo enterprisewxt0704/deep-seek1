@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildProjectionDefinition } from '../plugin/dsh-trpg-mode/index.js';
-import { buildLibrarySync, freshCampaign, writeCheckpoint, writeSave } from '../plugin/dsh-trpg-mode/lib/saves.js';
+import { buildProjectionDefinition } from '../../plugin/dsh-trpg-mode/index.js';
+import { buildLibrarySync, freshCampaign, writeCheckpoint, writeSave } from '../../plugin/dsh-trpg-mode/lib/saves.js';
 
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'trpg-proj-'));
 

@@ -6,7 +6,7 @@ import {
   writeCheckpoint,
   writeSave,
   freshCampaign,
-} from '../plugin/dsh-trpg-mode/lib/saves.js';
+} from '../../plugin/dsh-trpg-mode/lib/saves.js';
 
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'trpg-lib-'));
 const a = freshCampaign('甲团');

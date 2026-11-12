@@ -67,11 +67,16 @@ plugin/dsh-trpg-mode/
 ├── locale/*.json       # 面板文案
 └── icon.svg
 docs/
-├── 跑团模式-设计方案.md   # 方案 v1.1（需求、架构、token 估算）
-├── 跑团模式-使用说明.md   # 面向使用者的操作手册
-└── 验收报告.md           # 实现与验收证据（真实会话结果）
-tests/                  # 离线自测脚本（纯函数 / 工具链 / 迁移 / 投影）
+├── README.md                       # 文档索引
+├── design/跑团模式-设计方案.md      # 方案 v1.1（需求、架构、token 估算）
+├── guide/跑团模式-使用说明.md       # 面向使用者的操作手册
+└── acceptance/验收报告.md           # 实现与验收证据（真实会话结果）
+tests/
+├── unit/                           # 纯函数 / 团索引 / 投影（无外部依赖）
+└── integration/                    # 迁移回归 / 11 工具离线全链路
 ```
+
+> 本地开发辅助资料（DSH 勘察笔记、profile 回滚备份、内部交接记录）放在 `dev/`，已被 `.gitignore` 排除，不随仓库发布。
 
 ## 实现要点
 
@@ -90,11 +95,11 @@ tests/                  # 离线自测脚本（纯函数 / 工具链 / 迁移 / 
 ## 测试
 
 ```bash
-node tests/selftest.mjs   # 纯函数
-node tests/libtest.mjs    # 团索引
-node tests/projtest.mjs   # 投影 init/apply
-node tests/fixcheck.mjs   # 旧数据迁移 + 团列表回归
-node tests/tooltest.mjs   # 11 工具离线全链路
+node tests/unit/selftest.mjs          # 纯函数（骰子/时间/归一化/存档往返）
+node tests/unit/libtest.mjs           # 团索引
+node tests/unit/projtest.mjs          # 投影 init/apply
+node tests/integration/fixcheck.mjs   # 旧数据迁移 + 团列表回归
+node tests/integration/tooltest.mjs   # 11 工具离线全链路
 ```
 
-（`tests/tooltest.mjs` 等脚本会在临时目录建数据，不依赖真实 DSH；离线运行时 `defineTool` 不可用属预期，工具体仍可执行。）
+（`tests/integration/tooltest.mjs` 等脚本会在临时目录建数据，不依赖真实 DSH；离线运行时 `defineTool` 不可用属预期，工具体仍可执行。）

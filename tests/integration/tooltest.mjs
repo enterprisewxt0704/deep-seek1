@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'trpg-tools3-'));
-const { createToolDefinitions } = await import('../plugin/dsh-trpg-mode/lib/tools.js');
+const { createToolDefinitions } = await import('../../plugin/dsh-trpg-mode/lib/tools.js');
 
 // 旧版全局检查点：应被迁移成独立团，但不会自动挂到任何会话
 await fs.mkdir(path.join(cwd, '.trpg'), { recursive: true });
