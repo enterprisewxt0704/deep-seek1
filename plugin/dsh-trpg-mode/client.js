@@ -331,7 +331,94 @@ window.__ModuleLoader__.load({
       ]);
     }
 
+    var SETUP_LABELS = {
+      none: '未开始',
+      world_q: '世界观问卷',
+      world_ready: '世界观已生成',
+      pc_method: '选择角色来源',
+      pc_build: '创建角色',
+      pc_pick: '挑选人物卡',
+      place_method: '选择地点方式',
+      place_done: '地点已生成',
+      ready: '可以开始游戏',
+    };
+    var SETUP_FLOW = [
+      ['world_q', '问卷'],
+      ['world_ready', '世界'],
+      ['pc_build', '车卡'],
+      ['place_method', '地点'],
+      ['ready', '开局'],
+    ];
+
+    function SetupTab(props) {
+      var setup = props.setup && typeof props.setup === 'object' ? props.setup : {};
+      var stage = setup.stage || 'none';
+      var answers = Array.isArray(setup.answers) ? setup.answers : [];
+      var answered = Math.min(answers.length, 20);
+      var cards = Array.isArray(setup.pcCards) ? setup.pcCards : [];
+      var rolls = Array.isArray(setup.pcRolls) ? setup.pcRolls : [];
+      var draft = setup.placeDraft && typeof setup.placeDraft === 'object' ? setup.placeDraft : null;
+      var lastRoll = rolls.length ? rolls[rolls.length - 1] : null;
+      var missing = [];
+      for (var i = 1; i <= 20; i += 1) {
+        var qid = 'q' + i;
+        if (!answers.some(function (a) { return a && a.id === qid; })) missing.push(qid);
+      }
+      var next = '开局完成，直接开始游戏。';
+      if (stage === 'none') next = '还没有开局：让主持人调用 trpg_setup 开始 20 问问卷。';
+      else if (stage === 'world_q') next = '问卷进度 ' + answered + '/20：每批 4 题作答，答完让主持人生成世界。';
+      else if (stage === 'world_ready') next = '世界已生成：选择角色来源（购点 / 随机 / 主持人人物卡）。';
+      else if (stage === 'pc_build') next = setup.pcMethod === 'roll' ? '随机生成：确认骰面后定稿。' : '购点中：分配属性并定稿。';
+      else if (stage === 'pc_pick') next = '挑选一张人物卡（op=pc_pick）。';
+      else if (stage === 'place_method') next = '选择开始地点方式（购点 / 随机）。';
+      else if (stage === 'place_done') next = '地点已生成：确认后写入场景并开始第一幕。';
+
+      var st = function (idx, label) {
+        var on = stage === label[0] || (label[0] === 'pc_build' && stage === 'pc_pick') || (label[0] === 'place_method' && stage === 'place_done');
+        return h('div', {
+          key: label[0],
+          style: {
+            fontSize: 11,
+            padding: '2px 8px',
+            borderRadius: 999,
+            border: '1px solid ' + (on ? C.brand : C.border),
+            color: on ? C.brand : C.faint,
+          },
+        }, idx + 1 + '. ' + label[1]);
+      };
+
+      return h('div', null, [
+        h(Section, { key: 'flow', title: '开局进度' },
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+            SETUP_FLOW.map(function (label, idx) { return st(idx, label); }))),
+        h(Section, { key: 'stage', title: '当前阶段' },
+          h('div', null, [
+            h(Row, { key: 's', label: '阶段', value: SETUP_LABELS[stage] || stage }),
+            h(Row, { key: 'q', label: '问卷', value: answered + '/20' + (missing.length ? '（未答 ' + missing.length + '）' : '') }),
+            setup.pcMethod ? h(Row, { key: 'm', label: '角色来源', value: setup.pcMethod === 'cards' ? '主持人人物卡' : setup.pcMethod === 'roll' ? '随机生成' : '购点' }) : null,
+            setup.pointBuy && setup.pointBuy.template ? h(Row, { key: 't', label: '车卡模板', value: setup.pointBuy.template + (setup.pointBuy.remaining !== undefined ? '（剩 ' + setup.pointBuy.remaining + ' 点）' : '') }) : null,
+            lastRoll ? h(Row, { key: 'r', label: '随机属性', value: Object.keys(lastRoll.attrs || {}).map(function (k) { return k + ' ' + lastRoll.attrs[k]; }).join('，') }) : null,
+            cards.length ? h(Row, { key: 'c', label: '人物卡', value: cards.length + ' 张待选' }) : null,
+            draft ? h(Row, { key: 'p', label: '地点草稿', value: (draft.selected || []).map(function (x) { return x.name; }).join('、') || '—' }) : null,
+          ].filter(Boolean))),
+        h(Section, { key: 'next', title: '下一步' },
+          h('div', { style: { fontSize: 12.5, color: C.dim, lineHeight: 1.7 } }, next)),
+        h(Section, { key: 'acts', title: '快捷指令（填入输入框后回车）' },
+          h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, [
+            h(ActionButton, { key: 'a1', label: '填入：开始 20 问', onClick: function () { insertInstruction(props, '开始跑团开局问卷'); } }),
+            h(ActionButton, { key: 'a2', label: '填入：快速开局', onClick: function () { insertInstruction(props, '用默认答案快速开局'); } }),
+            h(ActionButton, { key: 'a3', label: '填入：自建购点', onClick: function () { insertInstruction(props, '我要自己车卡，用购点法'); } }),
+            h(ActionButton, { key: 'a4', label: '填入：随机角色', onClick: function () { insertInstruction(props, '角色用随机生成'); } }),
+            h(ActionButton, { key: 'a5', label: '填入：人物卡', onClick: function () { insertInstruction(props, '给我 3 张人物卡选'); } }),
+            h(ActionButton, { key: 'a6', label: '填入：地点购点', onClick: function () { insertInstruction(props, '开始地点用购点法'); } }),
+            h(ActionButton, { key: 'a7', label: '填入：地点随机', onClick: function () { insertInstruction(props, '开始地点随机生成'); } }),
+            h(ActionButton, { key: 'a8', label: '填入：重开问卷', onClick: function () { insertInstruction(props, '重开开局问卷'); } }),
+          ])),
+      ]);
+    }
+
     var TABS = [
+      { id: 'setup', label: '开局', render: SetupTab },
       { id: 'pc', label: '角色', render: PcTab },
       { id: 'dice', label: '骰子', render: DiceTab },
       { id: 'history', label: '团史', render: HistoryTab },

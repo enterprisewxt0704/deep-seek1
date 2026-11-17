@@ -2,10 +2,14 @@
  * 跑团模式共享状态模型：默认状态、归一化、骰子与时间工具。
  * 该文件同时被 Host 半边（投影/工具）使用；不得依赖任何 Harness 运行时包。
  */
+import { defaultSetup, normalizeSetup } from './setup.js';
 
 export const PROJECTION_KEY = 'trpg';
-/** v3：状态按团隔离（campaign.id + library 索引），面板可切换显示哪个团。 */
-export const STATE_VERSION = 3;
+/**
+ * v3：状态按团隔离（campaign.id + library 索引），面板可切换显示哪个团。
+ * v4：开局流程化（setup 阶段机 + 20 问问卷 + 车卡/地点双方法）。
+ */
+export const STATE_VERSION = 4;
 export const SAVE_FORMAT = 'dsh-trpg-save';
 export const SAVE_VERSION = 3;
 
@@ -46,6 +50,13 @@ export function defaultState() {
       locations: [],
       hooks: [],
       notes: '',
+      /** v4：由 20 问问卷归纳出的世界细节。 */
+      society: '',
+      economy: '',
+      culture: '',
+      religion: '',
+      tech: '',
+      secrets: '',
     },
     pc: {
       name: '',
@@ -60,6 +71,9 @@ export function defaultState() {
       inventory: [],
       conditions: [],
       xp: 0,
+      /** v4：开局流程生成的角色背景与目标。 */
+      background: '',
+      goal: '',
       notes: '',
     },
     scene: {
@@ -83,6 +97,8 @@ export function defaultState() {
     compactionLog: [],
     /** 团列表与存档索引（由 Host 在每次提交时重建，不写入每团存档文件）。 */
     library: defaultLibrary(),
+    /** 开局流程状态（阶段机、问卷答案、车卡与地点草稿）。 */
+    setup: defaultSetup(),
     lastUpdated: null,
   };
 }
@@ -133,7 +149,9 @@ export function normalizeState(raw) {
 
   s.world = mergeObj(base.world, s.world);
   for (const key of ['rules', 'factions', 'locations', 'hooks']) s.world[key] = arr(s.world[key]).slice(0, 200);
-  for (const key of ['name', 'genre', 'summary', 'tone', 'notes']) s.world[key] = str(s.world[key]);
+  for (const key of ['name', 'genre', 'summary', 'tone', 'notes', 'society', 'economy', 'culture', 'religion', 'tech', 'secrets']) {
+    s.world[key] = str(s.world[key]);
+  }
 
   // 团名/系统没显式给出时用世界信息兜底，面板与 /trpg-recap 就不会显示「未命名」。
   if (!s.campaign.name) s.campaign.name = s.world.name;
@@ -149,6 +167,8 @@ export function normalizeState(raw) {
   s.pc.conditions = arr(s.pc.conditions).slice(0, 50);
   if (!isObj(s.pc.attributes)) s.pc.attributes = {};
   if (!isObj(s.pc.skills)) s.pc.skills = {};
+  s.pc.background = str(s.pc.background);
+  s.pc.goal = str(s.pc.goal);
 
   s.scene = mergeObj(base.scene, s.scene);
   s.scene.participants = arr(s.scene.participants).slice(0, 50);
@@ -173,6 +193,14 @@ export function normalizeState(raw) {
   s.clock.label = formatClock(s.clock.elapsedMinutes);
 
   s.flags = isObj(s.flags) ? s.flags : {};
+  // 开局流程：旧状态没有 setup 字段。旧团（已有团/世界/角色）直接视为 ready，
+  // 空会话保持 none；只有显式建立 setup 的新团才从问卷开始。
+  const hadSetup = isObj(raw) && isObj(raw.setup);
+  s.setup = normalizeSetup(s.setup);
+  if (!hadSetup) {
+    const established = Boolean(s.campaign.id || s.campaign.name || s.world.name || s.pc.name);
+    s.setup.stage = established ? 'ready' : 'none';
+  }
   s.library = mergeObj(defaultLibrary(), isObj(s.library) ? s.library : {});
   s.library.activeCampaignId = str(s.library.activeCampaignId);
   s.library.campaigns = arr(s.library.campaigns).filter(isObj).slice(0, 80);

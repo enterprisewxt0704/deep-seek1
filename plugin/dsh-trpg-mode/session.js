@@ -21,6 +21,7 @@ const TRPG_TOOLS = [
   'trpg_save',
   'trpg_load',
   'trpg_campaigns',
+  'trpg_setup',
 ];
 
 /**

@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-trpg-mode",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
-  "description": "跑团模式（TRPG）：角色卡与历史骰点面板、骰子概率自定义、世界观生成、团史摘要、存档读档、跑团专用上下文压缩。",
+  "description": "跑团模式（TRPG）：流程化开局（20 问问卷 / 购点与随机车卡 / 开始地点）、角色卡与历史骰点面板、骰子概率自定义、世界观生成、团史摘要、存档读档、跑团专用上下文压缩。",
   "exports": {
     ".": "./index.js",
     "./session": "./session.js",

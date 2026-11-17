@@ -2,14 +2,15 @@
 
 给 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai) 桌面版增加一个「跑团模式」：以 AI 为主持人的单人跑团（TRPG）玩法。选这个模式后，右侧栏会出现一张随剧情实时更新的角色/骰点/团史面板，状态以会话投影保存，支持多团互不串线、完整存档管理与自由切换查看。
 
-> 版本：v1.2.1（2026-11-12）。已在 DSH desktop 实测：预设挂载、11 个工具、面板座位、会话投影、跑团专用压缩、存档/切团。
+> 版本：v1.3.0（2026-11-17）。已在 DSH desktop 实测：预设挂载、12 个工具、流程化开局（20 问问卷 / 购点 / 随机 / 人物卡 / 开始地点）、面板座位、会话投影、跑团专用压缩、存档/切团。
 
 ## 功能
 
 - **跑团预设**：新建会话时选择「跑团模式」（B 档，自带跑团专用压缩）或「跑团模式（兼容）」（A 档，使用宿主原生压缩）。
 - **世界观开局**：你提供世界观要求（题材、基调、规则、禁忌），主持人据此生成完整设定，写入面板后再创建角色、开始叙事。
+- **流程化开局（v1.3）**：20 问世界观问卷（5 组 × 4 题，带默认值）→ 世界观确认 → 角色（购点 / 随机 / 主持人 3 张人物卡）→ 开始地点（购点预算 6 点 / 随机）→ 第一幕；面板新增「开局」页签显示阶段与进度。
 - **右侧栏面板**：角色卡、骰点历史、团史摘要、世界设定、存档 / 团管理五个页签；顶部「看哪个团」下拉可自由查看工作区里任意团的概览。
-- **11 个工具**（只在跑团会话可见，其余工具被 guard 拒绝）：
+- **12 个工具**（只在跑团会话可见，其余工具被 guard 拒绝）：
   - `trpg_world` 世界观（get / create / update / new 另起新团）
   - `trpg_sheet` 角色卡（create / update / delta / get）
   - `trpg_scene` 当前场景
@@ -20,6 +21,7 @@
   - `trpg_save` 存档（save / list / delete 按文件名、槽位、整团）
   - `trpg_load` 读档（默认读**当前团**最近存档，可按团 / 槽位 / 文件）
   - `trpg_campaigns` 团管理（list / open / new）
+  - `trpg_setup` 开局流程（status / questions / record / world / pc_* / place_* / restart / skip）
 - **多团隔离**：每个团一份 `.trpg/campaigns/<团id>.json`，会话→团映射在 `.trpg/sessions/`，不再共用全局 `state.json`；旧版 `state.json` 会一次性迁移成独立团。
 - **跑团专用压缩**：B 档继承宿主 `BasicCompactionEngine`，把「当前团的面板状态」附进摘要提示，摘要按团名/角色/线索/未决事项/下一步组织；`/trpg-compact` 手动触发，`/trpg-recap` 快速回顾。
 - **工具收敛**：跑团会话只保留 `trpg_*` + `ask_user_question`；宿主无法从该层摘除的 per-agent 工具由 guard 拒绝调用。
@@ -40,10 +42,10 @@
 
 ## 使用
 
-1. 新建「跑团模式」会话，说出世界观要求，例如：
+1. 新建「跑团模式」会话，主持人会先问你要不要走流程化开局（20 问问卷）；答完后依次定世界、角色（购点 / 随机 / 人物卡）、开始地点，再进入第一幕。也可直接说「快速开局」用默认答案，或跳过问卷自由描述。
+2. 例如直接描述：
    > 我想要蒸汽朋克 + 低魔 + 侦探悬疑，主角是贵族侦探，规则用 d20 简化判定。
-2. 主持人会先 `trpg_world op=create` 写入世界观，再 `trpg_sheet op=create` 建角色，然后开始第一幕。
-3. 面板右上角可切换查看的团；右侧「存档」页签可管理所有团与存档（按钮会把指令填进输入框，回车执行）。
+3. 主持人会把世界、角色、场景、骰点写进面板；掷骰 / 时间 / 存档指令照旧。
 4. 常用对话指令：
    - 「列出所有团」「切换到团『灰钟港』」「另起一个新团：海雾镇」
    - 「把力量判定改成 2d6，权重 [2,3,4,5,6,5]」「默认骰改成 d100」
@@ -62,18 +64,20 @@ plugin/dsh-trpg-mode/
 ├── compaction.js       # B 档：跑团专用摘要引擎（继承宿主 BasicCompactionEngine）
 ├── client.js           # Web 客户端：右侧栏面板 + 头部「跑团」按钮
 ├── lib/state.js        # 状态模型、归一化、骰子/时钟纯函数
+├── lib/setup.js        # 开局流程：20 问问卷、购点模板、随机属性、人物卡、地点预算
 ├── lib/saves.js        # 团文件、会话映射、存档、旧数据迁移、面板索引
-├── lib/tools.js        # 11 个 trpg_* 工具定义
+├── lib/tools.js        # 12 个 trpg_* 工具定义
 ├── locale/*.json       # 面板文案
 └── icon.svg
 docs/
 ├── README.md                       # 文档索引
 ├── design/跑团模式-设计方案.md      # 方案 v1.1（需求、架构、token 估算）
+├── design/开局流程化-方案.md        # v1.3 开局流程方案（20 问 / 车卡 / 地点）
 ├── guide/跑团模式-使用说明.md       # 面向使用者的操作手册
 └── acceptance/验收报告.md           # 实现与验收证据（真实会话结果）
 tests/
-├── unit/                           # 纯函数 / 团索引 / 投影（无外部依赖）
-└── integration/                    # 迁移回归 / 11 工具离线全链路
+├── unit/                           # 纯函数 / 团索引 / 投影 / 开局流程（无外部依赖）
+└── integration/                    # 迁移回归 / 12 工具离线全链路 / 开局流程链路
 ```
 
 > 本地开发辅助资料（DSH 勘察笔记、profile 回滚备份、内部交接记录）放在 `dev/`，已被 `.gitignore` 排除，不随仓库发布。
@@ -98,8 +102,10 @@ tests/
 node tests/unit/selftest.mjs          # 纯函数（骰子/时间/归一化/存档往返）
 node tests/unit/libtest.mjs           # 团索引
 node tests/unit/projtest.mjs          # 投影 init/apply
+node tests/unit/setuptest.mjs         # 开局流程纯函数（问卷/购点/随机/人物卡/地点）
 node tests/integration/fixcheck.mjs   # 旧数据迁移 + 团列表回归
-node tests/integration/tooltest.mjs   # 11 工具离线全链路
+node tests/integration/tooltest.mjs   # 12 工具离线全链路
+node tests/integration/flowtest.mjs   # 开局流程工具链（问卷→世界→车卡→地点→第一幕）
 ```
 
 （`tests/integration/tooltest.mjs` 等脚本会在临时目录建数据，不依赖真实 DSH；离线运行时 `defineTool` 不可用属预期，工具体仍可执行。）

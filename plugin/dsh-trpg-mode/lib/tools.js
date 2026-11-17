@@ -30,6 +30,28 @@ import {
   writeSave,
   writeSessionBinding,
 } from './saves.js';
+import {
+  POINT_BUY_TEMPLATES,
+  SETUP_GROUPS,
+  STAGE_LABELS,
+  allQuestions,
+  answeredCount,
+  defaultSetup,
+  describePlacement,
+  fillDefaults,
+  locationBudget,
+  missingQuestions,
+  nextHint,
+  normalizePool,
+  normalizeSetup,
+  questionsForGroup,
+  resolveTemplate,
+  rollAttributeSet,
+  rollPlacement,
+  validateCards,
+  validatePlacement,
+  validatePointBuy,
+} from './setup.js';
 
 const ASAR_BASE = `${process.resourcesPath}${path.sep}app.asar${path.sep}dsh${path.sep}node_modules${path.sep}`;
 
@@ -638,6 +660,9 @@ export function createToolDefinitions(ctx, handle) {
           pcBrief(state.pc),
           sceneBrief(state.scene),
         ];
+        if (state.setup && state.setup.stage !== 'ready') {
+          parts.push(`开局流程：${STAGE_LABELS[state.setup.stage] || state.setup.stage}｜${nextHint(state.setup)}`);
+        }
         if (state.digests.length) {
           parts.push('最近团史：');
           for (const d of state.digests.slice(-digestCount)) parts.push(`- ${d.title ? `[${d.title}] ` : ''}${d.text}`);
@@ -812,6 +837,380 @@ export function createToolDefinitions(ctx, handle) {
           sceneBrief(loaded.scene),
         ].join('\n');
         return commit(exec, loaded, { text, value: { campaignId: found.id } });
+      },
+    ),
+  );
+
+  tools.push(
+    makeTool(
+      'trpg_setup',
+      '开局流程管理：20 问世界观问卷 → 生成世界 → 车卡（购点/随机/主持人人物卡）→ 选择开始地点（购点/随机）→ 第一幕。用 questions/record 收集答案，world 写世界观，pc_* 车卡，place_* 选地点；status 查当前阶段。旧团（无 setup）视为已完成开局。',
+      {
+        type: 'object',
+        properties: {
+          op: {
+            type: 'string',
+            enum: [
+              'status',
+              'questions',
+              'record',
+              'world',
+              'pc_method',
+              'pc_pointbuy',
+              'pc_roll',
+              'pc_cards_set',
+              'pc_pick',
+              'pc_finalize',
+              'place_method',
+              'place_pointbuy',
+              'place_roll',
+              'place_finalize',
+              'restart',
+              'skip',
+            ],
+            description: 'status 查阶段；questions 取问卷；record 记录答案；world 写世界；pc_* 车卡；place_* 地点；restart 重开问卷；skip 跳过开局。',
+          },
+          group: { type: 'string', description: 'questions 时的问卷分组 g1–g5（不传返回下一组未答题）。' },
+          answers: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: true },
+            description: 'record 的答案：[{id:"q1", answer:"蒸汽朋克"}]。',
+          },
+          world: { type: 'object', additionalProperties: true, description: 'world 的世界观对象（name/genre/summary/tone/rules/factions/locations/hooks/notes/society/economy/culture/religion/tech/secrets）。' },
+          quick: { type: 'boolean', description: 'world 时可传 true：用默认答案补齐未答问卷（快速开局）。' },
+          method: { type: 'string', enum: ['self', 'cards', 'pointbuy', 'roll'], description: 'pc_method：self/pointbuy/roll 自建，cards 用主持人人物卡；place_method：pointbuy 或 roll。' },
+          template: { type: 'string', enum: ['d20', '2d6', 'percentile', 'narrative'], description: '车卡模板（默认按问卷答案自动选择）。' },
+          alloc: { type: 'object', additionalProperties: true, description: 'pc_pointbuy 的属性分配，例如 {"力量":12,...}。' },
+          cards: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'pc_cards_set 的 3 张人物卡（name/race/class/attributes/…）。' },
+          index: { type: 'integer', description: 'pc_pick 选第几张人物卡（1–3）。' },
+          pool: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: true },
+            description: '地点候选池：[{id,name,kind}]，kind ∈ region/landmark/faction/mood。',
+          },
+          picks: { type: 'array', items: { type: 'string' }, description: 'place_pointbuy 选中的候选 id。' },
+          title: { type: 'string', description: 'place_finalize 的场景标题（可选）。' },
+          name: { type: 'string', description: 'pc_finalize 的角色名。' },
+          background: { type: 'string', description: 'pc_finalize 的角色背景。' },
+          goal: { type: 'string', description: 'pc_finalize 的角色目标。' },
+        },
+        required: ['op'],
+        additionalProperties: false,
+      },
+      async (args, exec) => {
+        const state = await getState(exec);
+        let setup = normalizeSetup(state.setup);
+
+        const commitSetup = (nextSetup, text, value = {}) => {
+          const next = { ...state, setup: normalizeSetup(nextSetup) };
+          return commit(exec, next, { text, value: { stage: next.setup.stage, ...value } });
+        };
+
+        const needWorld = () => {
+          if (!state.world.name && !state.campaign.name) {
+            throw new Error('还没有世界观：先完成 20 问卷并 op=world 生成世界，或 op=skip 跳过开局。');
+          }
+        };
+
+        const templateOf = (value, fallback) => (POINT_BUY_TEMPLATES[value] ? value : fallback);
+
+        const diceText = (entry) =>
+          entry.rolls
+            .map((r) => `${r.id}：${r.dice.join(',')} → ${r.total}${r.rawTotal !== undefined && r.rawTotal !== r.total ? `（2d6=${r.rawTotal}）` : ''}`)
+            .join('；');
+
+        const statusText = () => {
+          const total = allQuestions().length;
+          const answered = answeredCount(setup);
+          const missing = missingQuestions(setup).map((q) => q.id);
+          const lines = [
+            `【开局流程】阶段：${STAGE_LABELS[setup.stage] || setup.stage}（${setup.stage}）`,
+            `问卷：已答 ${answered}/${total}${missing.length ? `｜未答：${missing.join('、')}` : ''}`,
+          ];
+          if (setup.pcMethod) {
+            lines.push(`角色来源：${setup.pcMethod === 'cards' ? '主持人人物卡' : setup.pcMethod === 'roll' ? '随机生成' : '购点'}`);
+          }
+          const lastRoll = setup.pcRolls[setup.pcRolls.length - 1];
+          if (lastRoll) {
+            lines.push(`最近一次随机属性：${Object.entries(lastRoll.attrs).map(([k, v]) => `${k} ${v}`).join('，')}`);
+          }
+          if (setup.placeDraft && Array.isArray(setup.placeDraft.selected) && setup.placeDraft.selected.length) {
+            lines.push(`地点草稿：${setup.placeDraft.selected.map((x) => x.name).join('、')}`);
+          }
+          lines.push(`下一步：${nextHint(setup)}`);
+          return lines.join('\n');
+        };
+
+        const questionsText = (list) =>
+          list
+            .map(
+              (q) =>
+                `${q.id}【${q.groupTitle}】${q.question}${q.hint ? `（${q.hint}）` : ''}\n  选项：${q.options.join(' / ')}｜默认：${q.default}`,
+            )
+            .join('\n\n');
+
+        switch (args.op) {
+          case 'status':
+            return textResult(statusText(), { setup });
+          case 'questions': {
+            const group = String(args.group || '').trim();
+            if (group) {
+              const list = questionsForGroup(group);
+              if (!list.length) throw new Error(`没有名为「${group}」的问卷分组，可选 g1–g5。`);
+              return textResult(`【${list[0].groupTitle}（${group}）】\n\n${questionsText(list)}`, { questions: list });
+            }
+            const pending = missingQuestions(setup);
+            const list = pending.length ? pending.filter((q) => q.group === pending[0].group) : allQuestions();
+            return textResult(list.length ? questionsText(list) : '20 问已全部作答，可以用 op=world 生成世界观。', { questions: list });
+          }
+          case 'record': {
+            const answers = Array.isArray(args.answers) ? args.answers : [];
+            if (!answers.length) throw new Error('op=record 需要 answers 数组：[{id:"q1",answer:"…"}]。');
+            const bank = new Map(allQuestions().map((q) => [q.id, q]));
+            const map = new Map(setup.answers.map((a) => [a.id, a]));
+            for (const item of answers) {
+              const id = String(item && item.id ? item.id : '').trim();
+              const answer = String(item && item.answer !== undefined ? item.answer : '').trim();
+              const q = bank.get(id);
+              if (!q || !answer) continue;
+              map.set(id, { id, question: q.question, answer: answer.slice(0, 500), source: 'custom' });
+            }
+            setup.answers = [...map.values()];
+            setup.groupsDone = SETUP_GROUPS.filter((g) => g.questions.every((q) => map.has(q.id))).map((g) => g.id);
+            return commitSetup(
+              setup,
+              `已记录答案，问卷进度 ${answeredCount(setup)}/${allQuestions().length}。\n${nextHint(setup)}`,
+            );
+          }
+          case 'world': {
+            const world = args.world && typeof args.world === 'object' ? args.world : null;
+            if (!world || (!world.name && !world.genre)) throw new Error('op=world 需要 world.name 或 world.genre。');
+            if (args.quick) setup = fillDefaults(setup);
+            const merged = { ...state.world, ...world };
+            for (const key of ['rules', 'factions', 'locations', 'hooks']) {
+              if (key in world) merged[key] = asList(world[key]).slice(0, 200);
+            }
+            for (const key of ['name', 'genre', 'summary', 'tone', 'notes', 'society', 'economy', 'culture', 'religion', 'tech', 'secrets']) {
+              merged[key] = String(merged[key] || '');
+            }
+            setup.stage = 'world_ready';
+            setup.worldDraft = { name: merged.name, genre: merged.genre, at: new Date().toISOString() };
+            const next = {
+              ...state,
+              world: merged,
+              campaign: {
+                ...state.campaign,
+                name: state.campaign.name || merged.name,
+                system: state.campaign.system || merged.genre,
+              },
+              setup: normalizeSetup(setup),
+            };
+            return commit(exec, next, {
+              text: `世界观已生成并写入：\n${worldBrief(normalizeState(next).world)}\n\n下一步：询问玩家角色来源（自建购点 / 自建随机 / 主持人人物卡）。`,
+              value: { stage: 'world_ready', worldName: merged.name },
+            });
+          }
+          case 'pc_method': {
+            needWorld();
+            const method = String(args.method || 'self');
+            const template = templateOf(String(args.template || ''), resolveTemplate(setup));
+            if (method === 'cards') {
+              setup.pcMethod = 'cards';
+              setup.stage = 'pc_pick';
+              return commitSetup(setup, '已选择：主持人提供 3 张人物卡。请用 op=pc_cards_set 提交 3 张卡（name/race/class/attributes…），再用 op=pc_pick 让玩家挑选。');
+            }
+            if (method === 'roll') {
+              setup.pcMethod = 'roll';
+              setup.pointBuy = { ...setup.pointBuy, template };
+              setup.stage = 'pc_build';
+              return commitSetup(setup, `已选择：随机生成角色，模板「${POINT_BUY_TEMPLATES[template].name}」。请用 op=pc_roll 掷属性（结果不可重掷）。`);
+            }
+            setup.pcMethod = 'pointbuy';
+            setup.pcMode = 'self';
+            setup.pointBuy = { ...setup.pointBuy, template };
+            setup.stage = 'pc_build';
+            return commitSetup(
+              setup,
+              `已选择：购点车卡，模板「${POINT_BUY_TEMPLATES[template].name}」。请让玩家分配属性，用 op=pc_pointbuy 反复校验；确认后 op=pc_finalize。`,
+            );
+          }
+          case 'pc_pointbuy': {
+            needWorld();
+            const template = templateOf(String(args.template || ''), setup.pointBuy.template || 'd20');
+            const alloc = args.alloc && typeof args.alloc === 'object' ? args.alloc : {};
+            const check = validatePointBuy(template, alloc);
+            setup.pcMethod = 'pointbuy';
+            setup.pointBuy = { template, alloc, spent: check.spent, remaining: check.remaining };
+            setup.stage = 'pc_build';
+            const text = [
+              `模板：${POINT_BUY_TEMPLATES[template].name}`,
+              `已花 ${check.spent} 点｜剩余 ${check.remaining} 点`,
+              check.valid ? '分配合法，可以用 op=pc_finalize 定稿。' : `还有问题：\n- ${check.errors.join('\n- ')}`,
+            ].join('\n');
+            return commitSetup(setup, text, { valid: check.valid });
+          }
+          case 'pc_roll': {
+            needWorld();
+            const template = templateOf(String(args.template || ''), setup.pointBuy.template || resolveTemplate(setup));
+            const result = rollAttributeSet(template);
+            setup.pcMethod = 'roll';
+            setup.pointBuy = { ...setup.pointBuy, template };
+            setup.pcRolls = [...setup.pcRolls, { template, attrs: result.attrs, rolls: result.rolls, traits: result.traits || null, at: new Date().toISOString() }].slice(-10);
+            setup.stage = 'pc_build';
+            const parts = [`模板：${POINT_BUY_TEMPLATES[template].name}`, diceText({ rolls: result.rolls })];
+            if (result.traits && result.traits.length) parts.push(`随机特质：${result.traits.join('、')}`);
+            parts.push('如玩家接受，用 op=pc_finalize 定稿（骰面已记录，不可重掷）。');
+            return commitSetup(setup, parts.join('\n'), { attrs: result.attrs });
+          }
+          case 'pc_cards_set': {
+            needWorld();
+            const cards = Array.isArray(args.cards) ? args.cards.slice(0, 3) : [];
+            const template = templateOf(String(args.template || ''), resolveTemplate(setup));
+            const issues = validateCards(cards, template);
+            if (issues.length) throw new Error(`人物卡不合规：${issues.join('；')}`);
+            setup.pcCards = cards.map((c, i) => ({ id: c.id || `card-${i + 1}`, ...c }));
+            setup.pcMethod = 'cards';
+            setup.stage = 'pc_pick';
+            const lines = cards.map((c, i) => `${i + 1}. ${c.name || '未命名'}${c.race ? `（${c.race}）` : ''}${c.class ? ` ${c.class}` : ''}`);
+            return commitSetup(setup, `已收到 3 张人物卡：\n${lines.join('\n')}\n\n请玩家选择一张（op=pc_pick index=1..3）。`);
+          }
+          case 'pc_pick': {
+            needWorld();
+            if (!setup.pcCards.length) throw new Error('还没有人物卡：先用 op=pc_cards_set 提交 3 张。');
+            const index = Math.max(1, Math.min(setup.pcCards.length, Math.round(Number(args.index) || 1))) - 1;
+            const chosen = setup.pcCards[index];
+            const pc = {
+              ...state.pc,
+              name: String(chosen.name || '未命名冒险者'),
+              race: String(chosen.race || ''),
+              class: String(chosen.class || ''),
+              level: Math.max(1, Math.round(Number(chosen.level) || 1)),
+              attributes: chosen.attributes && typeof chosen.attributes === 'object' ? chosen.attributes : {},
+              skills: chosen.skills && typeof chosen.skills === 'object' ? chosen.skills : {},
+              hp: chosen.hp && typeof chosen.hp === 'object' ? chosen.hp : state.pc.hp,
+              mp: chosen.mp && typeof chosen.mp === 'object' ? chosen.mp : state.pc.mp,
+              ac: Number.isFinite(Number(chosen.ac)) ? Number(chosen.ac) : state.pc.ac,
+              inventory: Array.isArray(chosen.inventory) ? chosen.inventory : [],
+              background: String(chosen.background || ''),
+              goal: String(chosen.goal || ''),
+              notes: String(chosen.notes || ''),
+            };
+            setup.pcMethod = 'cards';
+            setup.stage = 'place_method';
+            return commit(exec, { ...state, pc, setup: normalizeSetup(setup) }, {
+              text: `已选择人物卡「${pc.name}」。\n${pcBrief(pc)}\n\n下一步：询问开始地点方式（购点 / 随机）；购点预算 ${locationBudget()} 点。`,
+              value: { pcName: pc.name, stage: 'place_method' },
+            });
+          }
+          case 'pc_finalize': {
+            needWorld();
+            let pc = { ...state.pc };
+            if (setup.pcMethod === 'pointbuy') {
+              const check = validatePointBuy(setup.pointBuy.template, setup.pointBuy.alloc);
+              if (!check.valid) throw new Error(`购点分配还不合法：${check.errors.join('；')}`);
+              pc = { ...pc, attributes: check.attrs, name: String(args.name || pc.name || '未命名冒险者') };
+            } else if (setup.pcMethod === 'roll') {
+              const last = setup.pcRolls[setup.pcRolls.length - 1];
+              if (!last) throw new Error('还没有掷骰结果：先 op=pc_roll。');
+              pc = { ...pc, attributes: last.attrs, name: String(args.name || pc.name || '未命名冒险者') };
+            } else if (setup.pcMethod === 'cards') {
+              if (!pc.name) throw new Error('还没有选择人物卡：先 op=pc_pick index=1..3。');
+            } else {
+              throw new Error('还没有选择角色来源：先 op=pc_method。');
+            }
+            if (args.name) pc.name = String(args.name);
+            if (args.background) pc.background = String(args.background);
+            if (args.goal) pc.goal = String(args.goal);
+            setup.stage = 'place_method';
+            return commit(exec, { ...state, pc, setup: normalizeSetup(setup) }, {
+              text: `角色已定稿：\n${pcBrief(pc)}\n\n下一步：询问开始地点方式（购点 / 随机）；购点预算 ${locationBudget()} 点。`,
+              value: { pcName: pc.name, stage: 'place_method' },
+            });
+          }
+          case 'place_method': {
+            const method = String(args.method || 'pointbuy');
+            if (method !== 'pointbuy' && method !== 'roll') throw new Error('op=place_method 的 method 只能是 pointbuy 或 roll。');
+            setup.placeMethod = method;
+            setup.stage = 'place_method';
+            if (Array.isArray(args.pool)) setup.placeDraft = { method, pool: normalizePool(args.pool) };
+            const text =
+              method === 'pointbuy'
+                ? `已选择地点购点：预算 ${locationBudget()} 点（区域必选 1 个 2 点；地标/势力/氛围各最多 2 个、每个 1 点）。请提供候选池（pool）并让玩家用 op=place_pointbuy picks 选择。`
+                : '已选择地点随机：请提供候选池（pool），然后用 op=place_roll 随机抽 1 个区域 + 地标/势力/氛围各 1 个。';
+            return commitSetup(setup, text);
+          }
+          case 'place_pointbuy': {
+            const pool = Array.isArray(args.pool)
+              ? normalizePool(args.pool)
+              : Array.isArray(setup.placeDraft && setup.placeDraft.pool)
+                ? setup.placeDraft.pool
+                : [];
+            if (!pool.length) throw new Error('需要候选池 pool：每项 {id,name,kind}，kind ∈ region/landmark/faction/mood。');
+            const picks = Array.isArray(args.picks) ? args.picks.map(String) : [];
+            const check = validatePlacement(picks, pool);
+            if (!check.valid) throw new Error(`地点选择不合规：${check.errors.join('；')}`);
+            setup.placeMethod = 'pointbuy';
+            setup.placeDraft = { method: 'pointbuy', pool, selected: check.selected, cost: check.cost, remaining: check.remaining };
+            setup.stage = 'place_done';
+            return commitSetup(
+              setup,
+              `地点已选定（花费 ${check.cost}/${locationBudget()} 点）：\n${describePlacement(check.selected)}\n\n确认后 op=place_finalize 写入场景并开始第一幕。`,
+            );
+          }
+          case 'place_roll': {
+            const pool = Array.isArray(args.pool)
+              ? normalizePool(args.pool)
+              : Array.isArray(setup.placeDraft && setup.placeDraft.pool)
+                ? setup.placeDraft.pool
+                : [];
+            if (!pool.length) throw new Error('需要候选池 pool。');
+            const result = rollPlacement(pool);
+            if (!result.selected.length) throw new Error('候选池不足：至少需要 1 个 region。');
+            const cost = 2 + result.selected.filter((x) => x.kind !== 'region').length;
+            setup.placeMethod = 'roll';
+            setup.placeDraft = { method: 'roll', pool, selected: result.selected, rolls: result.rolls, cost };
+            setup.stage = 'place_done';
+            const diceLines = result.rolls.map((r) => `${r.id}：${r.dice.join(',')} → ${r.total}`).join('；');
+            return commitSetup(
+              setup,
+              `已随机生成开始地点（不可重掷）：\n${describePlacement(result.selected)}\n骰面：${diceLines}\n\n确认后 op=place_finalize 写入场景并开始第一幕。`,
+            );
+          }
+          case 'place_finalize': {
+            const draft = setup.placeDraft;
+            if (!draft || !Array.isArray(draft.selected) || !draft.selected.length) {
+              throw new Error('还没有地点草稿：先 op=place_pointbuy 或 op=place_roll。');
+            }
+            const desc = describePlacement(draft.selected);
+            const region = draft.selected.find((x) => x.kind === 'region');
+            const scene = {
+              ...state.scene,
+              title: String(args.title || `${region ? region.name : '开局'}·第一幕`),
+              location: desc,
+              timeLabel: state.clock.label,
+              notes: desc,
+              updatedAt: new Date().toISOString(),
+            };
+            setup.stage = 'ready';
+            return commit(exec, { ...state, scene, setup: normalizeSetup(setup) }, {
+              text: `开局完成，第一幕地点已写入场景：\n${desc}\n\n现在开始叙事；每回合结束时记得推进时间（trpg_time）与团史（trpg_digest）。`,
+              value: { scene, stage: 'ready' },
+            });
+          }
+          case 'restart': {
+            setup = defaultSetup();
+            setup.stage = 'world_q';
+            setup.startedAt = new Date().toISOString();
+            return commitSetup(setup, '已重置开局流程：回到 20 问世界观问卷（当前团的世界与角色不会被删除，重新生成世界观会覆盖）。');
+          }
+          case 'skip': {
+            setup.skipped = [...setup.skipped, 'manual'];
+            setup.stage = 'ready';
+            return commitSetup(setup, '已跳过开局流程，可以直接开始游戏（之后仍可用 op=restart 重新走流程）。');
+          }
+          default:
+            throw new Error(`未知的 op「${args.op}」；可用 op：status/questions/record/world/pc_*/place_*/restart/skip。`);
+        }
       },
     ),
   );

@@ -496,5 +496,7 @@ export function freshCampaign(name = '') {
   base.campaign.name = name;
   base.campaign.startedAt = new Date().toISOString();
   base.lastUpdated = new Date().toISOString();
+  // v1.3：新团从「20 问世界观问卷」开始，而不是直接进入 ready。
+  base.setup = { ...base.setup, stage: 'world_q', startedAt: base.campaign.startedAt };
   return base;
 }
